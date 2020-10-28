@@ -276,6 +276,64 @@ class InstalledRpms(CommandParser, RpmList):
         return any(c in s for s in self.errors for c in _corrupts)
 
 
+@parser(Specs.installed_rpms)
+class LhInstalledRpms(CommandParser, RpmList):
+    """
+    A parser for working with data containing a list of installed RPM files on the system and
+    related information.
+    """
+    def __init__(self, *args, **kwargs):
+        self.errors = list()
+        """list: List of input lines that indicate an error acquiring the data on the client."""
+        self.unparsed = list()
+        """list: List of input lines that raised an exception during parsing."""
+        self.packages = dict()
+        """
+        dict (InstalledRpm): Dictionary of RPMs keyed by package name.
+
+        .. note::
+            The ``packages`` could be empty, e.g. when rpm database corrupt.
+            When doing exclusion check, make sure the ``packages`` is NOT
+            empty, e.g.::
+
+                >>> if rpms.packages and "pkg_name" not in rpms.packages:
+                >>>     pass
+        """
+        super(InstalledRpms, self).__init__(*args, **kwargs)
+
+    def parse_content(self, content):
+        packages = defaultdict(list)
+        for line in get_active_lines(content, comment_char='COMMAND>'):
+            if line.startswith('error:') or line.startswith('warning:'):
+                self.errors.append(line)
+            else:
+                try:
+                    # Try to parse from JSON input
+                    rpm = InstalledRpm.from_json(line)
+                    packages[rpm.name].append(rpm)
+                except Exception:
+                    # If that fails, try to parse from line input
+                    if line.strip():
+                        try:
+                            rpm = InstalledRpm.from_line(line)
+                            packages[rpm.name].append(rpm)
+                        except Exception:
+                            # Both ways failed
+                            self.unparsed.append(line)
+        # Don't want defaultdict's behavior after parsing is complete
+        self.packages = dict(packages)
+
+    @property
+    def corrupt(self):
+        """bool: True if RPM database is corrupted, else False."""
+        _corrupts = [
+            'error: rpmdbNextIterator',
+            'error: rpmdb: BDB0113',
+            'error: db5 error',
+        ]
+        return any(c in s for s in self.errors for c in _corrupts)
+
+
 p = re.compile(r"(\d+|[a-z]+|\.|-|_)")
 
 
